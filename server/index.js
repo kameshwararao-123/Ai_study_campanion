@@ -24,36 +24,14 @@ const CLIENT_DIST_PATH = path.resolve(__dirname, "../client/dist");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Flexible CORS setup: supports single origin, comma-separated origins, or wildcard
-const rawClientUrls = (process.env.CLIENT_URL || "http://localhost:5173")
-  .split(",")
-  .map((u) => {
-    const trimmed = u.trim();
-    if (!trimmed || trimmed === "*") return trimmed;
-    try {
-      return new URL(trimmed).origin;
-    } catch {
-      return trimmed.replace(/\/+$/, "");
-    }
-  })
-  .filter(Boolean);
-const allowedOrigins = new Set([...rawClientUrls, "http://localhost:5173", "http://localhost:5000", "http://localhost:3000"]);
-
+// Allow ANY origin to access backend with credentials support
 app.use(cors({
-  origin: (origin, callback) => {
-    // Allow non-browser requests (mobile, curl, server-to-server) or same-origin
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.has("*") || allowedOrigins.has(origin)) {
-      return callback(null, true);
-    }
-    // Allow any localhost port in development
-    if (process.env.NODE_ENV !== "production" && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
-      return callback(null, true);
-    }
-    return callback(new Error(`Blocked by CORS for origin: ${origin}`));
-  },
+  origin: true, // Automatically reflects request origin, allowing any origin including with credentials
   credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
 }));
+app.options("*", cors());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
