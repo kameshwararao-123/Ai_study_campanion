@@ -51,6 +51,10 @@ app.get("/api/health", (req, res) => {
   res.json({ success: true, data: { status: "ok", timestamp: new Date().toISOString() } });
 });
 
+app.get("/health", (req, res) => {
+  res.json({ success: true, data: { status: "ok", timestamp: new Date().toISOString() } });
+});
+
 // In production, serve static assets and support SPA client-side routing
 if (fs.existsSync(CLIENT_DIST_PATH)) {
   app.use(express.static(CLIENT_DIST_PATH));
