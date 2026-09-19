@@ -90,8 +90,9 @@ if (fs.existsSync(CLIENT_DIST_PATH)) {
 }
 
 app.use(errorHandler);
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 const isTestEnv = process.env.NODE_ENV === "test" || process.argv.some((arg) => arg.includes("test"));
-if (!isTestEnv) {
+if (!isTestEnv && !isServerless) {
   connectDB()
     .then(() => {
       app.listen(PORT, () => {

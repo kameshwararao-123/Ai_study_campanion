@@ -13,7 +13,9 @@ export const materialsRouter = Router();
 materialsRouter.use(authenticate);
 
 // Ensure upload directory exists
-const UPLOAD_DIR = path.resolve(process.env.UPLOADS_DIR || "./uploads");
+const UPLOAD_DIR = path.resolve(
+  process.env.UPLOADS_DIR || (process.env.VERCEL ? "/tmp/uploads" : "./uploads")
+);
 await fs.mkdir(UPLOAD_DIR, { recursive: true });
 
 const storage = multer.diskStorage({

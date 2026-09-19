@@ -39,8 +39,12 @@ class BackgroundQueue {
       },
     });
 
-    // Asynchronously trigger processing without blocking caller
-    setImmediate(() => this.processNext());
+    // Asynchronously trigger processing without blocking caller (or inline on Vercel)
+    if (process.env.VERCEL) {
+      await this.processNext();
+    } else {
+      setImmediate(() => this.processNext());
+    }
 
     return job;
   }
