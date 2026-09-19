@@ -1,0 +1,20 @@
+export { User } from "./User.js";
+export { Space } from "./Space.js";
+export { Project } from "./Project.js";
+export { LearningMaterial } from "./LearningMaterial.js";
+export { DocumentChunk, KnowledgeChunk } from "./DocumentChunk.js";
+export { Concept } from "./Concept.js";
+export { ConceptMastery } from "./ConceptMastery.js";
+export { MasteryHistoryLog } from "./MasteryHistoryLog.js";
+export { TutorSession } from "./TutorSession.js";
+export { TutorMessage } from "./TutorMessage.js";
+export { Quiz } from "./Quiz.js";
+export { QuizQuestion } from "./QuizQuestion.js";
+export { QuizSubmission } from "./QuizSubmission.js";
+export { PersistentLearnerContext } from "./PersistentLearnerContext.js";
+export { Recommendation } from "./Recommendation.js";
+export { LearningEvent } from "./LearningEvent.js";
+export { AITelemetryLog } from "./AITelemetryLog.js";
+export { AIEvaluationRecord } from "./AIEvaluationRecord.js";
+export { BackgroundJob } from "./BackgroundJob.js";
+
