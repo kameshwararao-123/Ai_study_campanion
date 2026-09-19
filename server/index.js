@@ -24,9 +24,34 @@ const CLIENT_DIST_PATH = path.resolve(__dirname, "../client/dist");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Allow ANY origin to access backend with credentials support
+// Strict CORS whitelist: only frontend URL and local dev
+const rawOrigins = (process.env.CLIENT_URL || "https://client-ecru-theta-76.vercel.app")
+  .split(",")
+  .map((u) => {
+    const trimmed = u.trim();
+    if (!trimmed) return "";
+    try {
+      return new URL(trimmed).origin;
+    } catch {
+      return trimmed.replace(/\/+$/, "");
+    }
+  })
+  .filter(Boolean);
+
+const allowedOrigins = new Set([
+  ...rawOrigins,
+  "https://client-ecru-theta-76.vercel.app",
+  "http://localhost:5173",
+]);
+
 app.use(cors({
-  origin: true, // Automatically reflects request origin, allowing any origin including with credentials
+  origin: (origin, callback) => {
+    // Allow non-browser requests (e.g. server-to-server, health checks) or exact frontend origin
+    if (!origin || allowedOrigins.has(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error(`CORS blocked: Origin ${origin} is not allowed`));
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
