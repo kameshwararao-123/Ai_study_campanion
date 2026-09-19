@@ -20,7 +20,7 @@ test("Phase 14: Comprehensive True Multimodal RAG Suite (Tests 1 through 11)", a
       email: `multimodal_eval_${timestamp}@example.com`,
       name: "Multimodal Tester",
       passwordHash: "mock_hash_eval",
-      role: "STUDENT",
+      role: "LEARNER",
     },
   });
 
@@ -49,6 +49,7 @@ test("Phase 14: Comprehensive True Multimodal RAG Suite (Tests 1 through 11)", a
       spaceId: space.id,
       name: "Algorithms & Systems",
       description: "Core algorithms, data structures, and ML foundations",
+      learningGoal: "Master core algorithms and ML foundations",
       userId: testUser.id,
     },
   });
@@ -59,6 +60,7 @@ test("Phase 14: Comprehensive True Multimodal RAG Suite (Tests 1 through 11)", a
       spaceId: space.id,
       name: "Cloud Computing",
       description: "Distributed networks and cloud infrastructure",
+      learningGoal: "Understand distributed networks and cloud infrastructure",
       userId: testUser.id,
     },
   });

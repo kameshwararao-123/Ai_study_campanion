@@ -18,7 +18,11 @@ const documentChunkSchema = new mongoose.Schema(
     content: { type: String, required: true },
     tokenCount: { type: Number, default: 0 },
     embedding: { type: String, default: null },
-    metadata: { type: String, default: null },
+    // Mixed, not String: the chunker emits metadata as an object. Declaring it as
+    // String made Mongoose reject every chunk ("Cast to string failed for value
+    // \"{...}\" at path \"metadata\""), so ingestion stored zero chunks while the
+    // material was still marked READY. Mixed also accepts the legacy JSON-string form.
+    metadata: { type: mongoose.Schema.Types.Mixed, default: null },
     structuredData: { type: String, default: null }, // JSON string with type-specific details (headers, rows, etc.)
     sourceMetadata: { type: String, default: null }, // JSON string with full provenance
   },

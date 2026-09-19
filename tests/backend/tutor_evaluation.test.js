@@ -23,7 +23,7 @@ test("AI Tutor Evaluation Suite: 8 Required Verification Tests (A-H)", async (t)
       email: `tutor_eval_${timestamp}@example.com`,
       name: "Evaluation Tester",
       passwordHash: "dummyhash",
-      role: "STUDENT",
+      role: "LEARNER",
     },
   });
 
@@ -51,6 +51,7 @@ test("AI Tutor Evaluation Suite: 8 Required Verification Tests (A-H)", async (t)
       spaceId: space.id,
       name: "Machine Learning Basics",
       description: "Supervised and Unsupervised Learning notes",
+      learningGoal: "Master supervised and unsupervised learning",
       userId: testUser.id,
     },
   });
@@ -61,17 +62,16 @@ test("AI Tutor Evaluation Suite: 8 Required Verification Tests (A-H)", async (t)
       spaceId: space.id,
       name: "Web Architecture",
       description: "HTTP, REST APIs and Microservices",
+      learningGoal: "Understand HTTP, REST APIs and microservices",
       userId: testUser.id,
     },
   });
 
   const materialA = await prisma.learningMaterial.create({
     data: {
-      title: "ML_Foundations.pdf",
       filename: "ML_Foundations.pdf",
       fileUrl: "/uploads/ML_Foundations.pdf",
-      fileType: "application/pdf",
-      fileSize: 1048576,
+      fileSizeBytes: 1048576,
       status: "READY",
       extractedText: "Supervised learning overview",
       userId: testUser.id,

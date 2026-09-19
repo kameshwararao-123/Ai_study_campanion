@@ -78,8 +78,10 @@ analyticsRouter.get("/global", async (req, res, next) => {
     const weakAreas = await prisma.conceptMastery.findMany({
       where: { userId, trend: "REQUIRING_ATTENTION" },
       include: { concept: true, project: true },
-      take: 5,
+      take: 8,
     });
+
+    const validWeakAreas = weakAreas.filter((w) => w && w.concept && w.project);
 
     return apiSuccess(res, {
       summary: {
@@ -89,11 +91,17 @@ analyticsRouter.get("/global", async (req, res, next) => {
         masteredConcepts: conceptsCount,
       },
       recentProjects,
-      weakAreas: weakAreas.map((w) => ({
+      weakAreas: validWeakAreas.map((w) => ({
+        id: w.id || w.conceptId,
+        conceptId: w.conceptId,
+        name: w.concept.name,
         conceptName: w.concept.name,
+        definition: w.concept.definition,
         projectName: w.project.name,
         projectId: w.projectId,
         score: w.masteryScore,
+        masteryScore: w.masteryScore,
+        trend: w.trend,
       })),
     });
   } catch (err) {

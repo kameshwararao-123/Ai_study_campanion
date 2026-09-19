@@ -85,21 +85,24 @@ export default function GrowthAnalysisPage() {
                 No concepts in this tier yet. Take quizzes to build mastery!
               </div>
             ) : (
-              improving.map((c) => (
-                <div key={c.id} className="p-4 bg-emerald-50/40 rounded-2xl border border-emerald-100/80 space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="font-bold text-slate-900 text-xs">{c.name}</span>
-                    <span className="text-xs font-bold text-emerald-700">{c.masteryScore.toFixed(0)}%</span>
+              improving.map((c, idx) => {
+                const score = Number(c.masteryScore ?? 75);
+                return (
+                  <div key={c.id || idx} className="p-4 bg-emerald-50/40 rounded-2xl border border-emerald-100/80 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="font-bold text-slate-900 text-xs">{c.name}</span>
+                      <span className="text-xs font-bold text-emerald-700">{score.toFixed(0)}%</span>
+                    </div>
+                    <div className="w-full bg-emerald-100/60 rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className="bg-emerald-500 h-1.5 rounded-full transition-all duration-500"
+                        style={{ width: `${Math.min(100, Math.max(0, score))}%` }}
+                      ></div>
+                    </div>
+                    <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">{c.definition}</p>
                   </div>
-                  <div className="w-full bg-emerald-100/60 rounded-full h-1.5 overflow-hidden">
-                    <div
-                      className="bg-emerald-500 h-1.5 rounded-full transition-all duration-500"
-                      style={{ width: `${Math.min(100, Math.max(0, c.masteryScore))}%` }}
-                    ></div>
-                  </div>
-                  <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">{c.definition}</p>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -128,21 +131,24 @@ export default function GrowthAnalysisPage() {
                 No concepts currently developing.
               </div>
             ) : (
-              stable.map((c) => (
-                <div key={c.id} className="p-4 bg-blue-50/40 rounded-2xl border border-blue-100/80 space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="font-bold text-slate-900 text-xs">{c.name}</span>
-                    <span className="text-xs font-bold text-blue-700">{c.masteryScore.toFixed(0)}%</span>
+              stable.map((c, idx) => {
+                const score = Number(c.masteryScore ?? 50);
+                return (
+                  <div key={c.id || idx} className="p-4 bg-blue-50/40 rounded-2xl border border-blue-100/80 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="font-bold text-slate-900 text-xs">{c.name}</span>
+                      <span className="text-xs font-bold text-blue-700">{score.toFixed(0)}%</span>
+                    </div>
+                    <div className="w-full bg-blue-100/60 rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className="bg-blue-500 h-1.5 rounded-full transition-all duration-500"
+                        style={{ width: `${Math.min(100, Math.max(0, score))}%` }}
+                      ></div>
+                    </div>
+                    <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">{c.definition}</p>
                   </div>
-                  <div className="w-full bg-blue-100/60 rounded-full h-1.5 overflow-hidden">
-                    <div
-                      className="bg-blue-500 h-1.5 rounded-full transition-all duration-500"
-                      style={{ width: `${Math.min(100, Math.max(0, c.masteryScore))}%` }}
-                    ></div>
-                  </div>
-                  <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">{c.definition}</p>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -171,21 +177,24 @@ export default function GrowthAnalysisPage() {
                 All concepts are currently in stable or mastered standing!
               </div>
             ) : (
-              requiringAttention.map((c) => (
-                <div key={c.id} className="p-4 bg-amber-50/40 rounded-2xl border border-amber-100/80 space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="font-bold text-slate-900 text-xs">{c.name}</span>
-                    <span className="text-xs font-bold text-amber-700">{c.masteryScore.toFixed(0)}%</span>
+              requiringAttention.map((c, idx) => {
+                const score = Number(c.masteryScore ?? 40);
+                return (
+                  <div key={c.id || idx} className="p-4 bg-amber-50/40 rounded-2xl border border-amber-100/80 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="font-bold text-slate-900 text-xs">{c.name}</span>
+                      <span className="text-xs font-bold text-amber-700">{score.toFixed(0)}%</span>
+                    </div>
+                    <div className="w-full bg-amber-100/60 rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className="bg-amber-500 h-1.5 rounded-full transition-all duration-500"
+                        style={{ width: `${Math.min(100, Math.max(0, score))}%` }}
+                      ></div>
+                    </div>
+                    <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">{c.definition}</p>
                   </div>
-                  <div className="w-full bg-amber-100/60 rounded-full h-1.5 overflow-hidden">
-                    <div
-                      className="bg-amber-500 h-1.5 rounded-full transition-all duration-500"
-                      style={{ width: `${Math.min(100, Math.max(0, c.masteryScore))}%` }}
-                    ></div>
-                  </div>
-                  <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">{c.definition}</p>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

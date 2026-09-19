@@ -4,55 +4,178 @@ import * as models from "../models/index.js";
 
 export * from "../models/index.js";
 
-const MONGODB_URI =
-  process.env.MONGODB_URI ||
-  process.env.DATABASE_URL ||
-  "mongodb://localhost:27017/ai_study_companion";
+const MONGODB_URI = process.env.MONGODB_URI || process.env.DATABASE_URL || "";
 
-let isConnected = false;
-const inMemoryStore = new Map();
+// Only one connection attempt may be in flight at a time.
+let connecting = null;
 
-function getStore(modelName) {
-  if (!inMemoryStore.has(modelName)) {
-    inMemoryStore.set(modelName, new Map());
+function redact(uri) {
+  return uri.replace(/\/\/([^:]+):([^@]+)@/, "//$1:****@");
+}
+
+export function isDbConnected() {
+  return mongoose.connection.readyState === 1;
+}
+
+/**
+ * MongoDB Atlas is the ONLY persistence layer.
+ *
+ * There is deliberately no in-memory fallback: silently serving reads/writes
+ * from a volatile Map made rejected writes look successful (ingestion reported
+ * "chunks stored" while nothing reached Atlas, so the tutor then refused every
+ * question). A missing database must surface as an explicit error, never as
+ * phantom data.
+ */
+function assertConnected(modelName) {
+  if (!isDbConnected()) {
+    throw new Error(
+      `[db] MongoDB Atlas is not connected (readyState=${mongoose.connection.readyState}); ` +
+        `refusing to serve ${modelName} from a volatile in-memory store. ` +
+        `Verify MONGODB_URI and network access, then retry.`
+    );
   }
-  return inMemoryStore.get(modelName);
+}
+
+/**
+ * Waits for an in-flight (or not-yet-started) Atlas connection before a query.
+ * Startup code and tests often issue their first query while the connection is
+ * still being established; waiting is safe, a silent in-memory fallback is not.
+ */
+async function ensureConnected(modelName) {
+  if (isDbConnected()) return;
+
+  if (connecting) {
+    try {
+      await connecting;
+    } catch (_) {
+      // fall through to the explicit error below
+    }
+  } else if (mongoose.connection.readyState === 0) {
+    try {
+      await connectDB();
+    } catch (_) {
+      // fall through to the explicit error below
+    }
+  }
+
+  assertConnected(modelName);
 }
 
 export async function connectDB(uri = MONGODB_URI) {
-  if (mongoose.connection.readyState === 1) {
-    isConnected = true;
-    return mongoose.connection;
-  }
+  if (isDbConnected()) return mongoose.connection;
 
-  // If URI starts with file: or sqlite, use default mongodb URI
-  const mongoUri = uri.startsWith("file:") ? "mongodb://localhost:27017/ai_study_companion" : uri;
-  const isAtlas = mongoUri.startsWith("mongodb+srv://");
-  const safeUri = mongoUri.replace(/\/\/([^:]+):([^@]+)@/, "//$1:****@");
-
-  try {
-    const conn = await mongoose.connect(mongoUri, {
-      serverSelectionTimeoutMS: isAtlas ? 10000 : 2500,
-      connectTimeoutMS: isAtlas ? 10000 : 2500,
-    });
-    isConnected = true;
-    console.log(`🍃 Connected to MongoDB Atlas/Database at ${safeUri}`);
-    return conn;
-  } catch (err) {
-    isConnected = false;
-    console.warn(
-      `⚠️ MongoDB connection at ${safeUri} could not be established (${err.message}). Running with in-memory persistence adapter.`
+  if (!uri || !/^mongodb(\+srv)?:\/\//i.test(uri)) {
+    throw new Error(
+      "[db] A MongoDB connection string is required. Set MONGODB_URI (MongoDB Atlas) in the environment."
     );
-    return null;
   }
+
+  if (connecting) return connecting;
+
+  const safeUri = redact(uri);
+  const isAtlas = uri.startsWith("mongodb+srv://");
+
+  connecting = mongoose
+    .connect(uri, {
+      // Force IPv4 to avoid IPv6 DNS resolution failures (common with Atlas SRV records)
+      family: 4,
+      serverSelectionTimeoutMS: isAtlas ? 30000 : 5000,
+      connectTimeoutMS: isAtlas ? 30000 : 5000,
+      socketTimeoutMS: isAtlas ? 45000 : 10000,
+      heartbeatFrequencyMS: 10000,
+    })
+    .then((conn) => {
+      console.log(`🍃 Connected to MongoDB at ${safeUri}`);
+      return conn;
+    })
+    .catch((err) => {
+      console.error(`❌ MongoDB connection to ${safeUri} failed: ${err.message}`);
+      throw err;
+    })
+    .finally(() => {
+      connecting = null;
+    });
+
+  return connecting;
 }
 
-// Auto-connect if not in test
+// Auto-connect on import (server runtime). Tests connect explicitly via connectDB().
 if (process.env.NODE_ENV !== "test") {
   connectDB().catch(() => {});
 }
 
-// Helper for deep cloning & formatting documents
+// ---- Query translation (Prisma-flavoured adapter -> Mongoose) ----------------
+
+const MONGO_OPERATORS = {
+  in: "$in",
+  nin: "$nin",
+  gt: "$gt",
+  gte: "$gte",
+  lt: "$lt",
+  lte: "$lte",
+  ne: "$ne",
+  not: "$not",
+  equals: "$eq",
+};
+
+/**
+ * Translates a Prisma-style `where` object into a Mongo query.
+ *
+ * Also understands Prisma composite unique keys such as
+ * `{ projectId_conceptId_userId: { projectId, conceptId, userId } }`, which the
+ * ingestion pipeline uses to upsert baseline concept mastery.
+ */
+function toMongoQuery(where = {}) {
+  const query = {};
+
+  for (const [key, raw] of Object.entries(where)) {
+    if (raw === undefined) continue;
+
+    const isPlainObject =
+      raw !== null && typeof raw === "object" && !Array.isArray(raw) && !(raw instanceof Date);
+
+    // Composite unique key -> flatten to the individual fields it references.
+    if (isPlainObject && !Object.keys(raw).some((k) => k in MONGO_OPERATORS)) {
+      for (const [compositeKey, compositeValue] of Object.entries(raw)) {
+        query[compositeKey === "id" ? "_id" : compositeKey] = compositeValue;
+      }
+      continue;
+    }
+
+    const field = key === "id" ? "_id" : key;
+
+    if (isPlainObject) {
+      const operators = {};
+      let hasOperators = false;
+      for (const [op, opValue] of Object.entries(raw)) {
+        if (MONGO_OPERATORS[op]) {
+          operators[MONGO_OPERATORS[op]] = opValue;
+          hasOperators = true;
+        }
+      }
+      if (hasOperators) {
+        query[field] = operators;
+        continue;
+      }
+    }
+
+    query[field] = raw;
+  }
+
+  return query;
+}
+
+function toMongoSort(orderBy) {
+  if (!orderBy) return null;
+  const sort = {};
+  for (const [key, dir] of Object.entries(orderBy)) {
+    sort[key === "id" ? "_id" : key] = dir === "desc" ? -1 : 1;
+  }
+  return sort;
+}
+
+// ---- Document formatting ----------------------------------------------------
+
 function formatDoc(raw) {
   if (!raw) return null;
   const doc = JSON.parse(JSON.stringify(raw));
@@ -68,50 +191,8 @@ function formatDoc(raw) {
   return doc;
 }
 
-// Check where match
-function matchesWhere(item, where) {
-  if (!where || Object.keys(where).length === 0) return true;
+// ---- Relation hydration -----------------------------------------------------
 
-  for (const [key, val] of Object.entries(where)) {
-    if (val === undefined) continue;
-
-    if (val !== null && typeof val === "object" && !Array.isArray(val) && !(val instanceof Date)) {
-      // Comparison operator object
-      const itemVal = item[key];
-      for (const [op, opVal] of Object.entries(val)) {
-        if (op === "equals" && itemVal !== opVal) return false;
-        if (op === "not" && itemVal === opVal) return false;
-        if (op === "gt" && !(itemVal > opVal)) return false;
-        if (op === "gte" && !(itemVal >= opVal)) return false;
-        if (op === "lt" && !(itemVal < opVal)) return false;
-        if (op === "lte" && !(itemVal <= opVal)) return false;
-        if (op === "in" && (!Array.isArray(opVal) || !opVal.includes(itemVal))) return false;
-      }
-      continue;
-    }
-
-    if ((key === "id" || key === "chunkId") && item.id !== val && item._id !== val && item.chunkId !== val) {
-      return false;
-    }
-
-    if ((key === "materialId" || key === "documentId") && item.materialId !== val && item.documentId !== val) {
-      return false;
-    }
-
-    if (key !== "id" && key !== "chunkId" && key !== "materialId" && key !== "documentId") {
-      if (val instanceof Date) {
-        const itemDate = item[key] ? new Date(item[key]).getTime() : null;
-        if (itemDate !== val.getTime()) return false;
-      } else if (item[key] !== val) {
-        return false;
-      }
-    }
-  }
-
-  return true;
-}
-
-// Apply relations & selects
 async function applyIncludes(modelName, items, include, adapter) {
   if (!include || items.length === 0) return items;
 
@@ -242,6 +323,8 @@ async function applyIncludes(modelName, items, include, adapter) {
   return items;
 }
 
+// ---- Model adapter ----------------------------------------------------------
+
 function createModelAdapter(modelName, MongooseModel) {
   return {
     async findUnique({ where, select, include } = {}) {
@@ -249,189 +332,73 @@ function createModelAdapter(modelName, MongooseModel) {
     },
 
     async findFirst({ where, select, include, orderBy } = {}) {
-      if (mongoose.connection.readyState === 1) {
-        try {
-          const query = { ...where };
-          if (query.id) {
-            query._id = query.id;
-            delete query.id;
-          }
-          let q = MongooseModel.findOne(query);
-          if (orderBy) {
-            const sort = {};
-            for (const [k, v] of Object.entries(orderBy)) {
-              sort[k] = v === "desc" ? -1 : 1;
-            }
-            q = q.sort(sort);
-          }
-          const doc = await q.lean().exec();
-          if (doc) {
-            const formatted = formatDoc(doc);
-            if (include) {
-              const [withInc] = await applyIncludes(modelName, [formatted], include, prisma);
-              return withInc;
-            }
-            return formatted;
-          }
-        } catch (e) {
-          // fallback to in-memory if query error
-        }
-      }
+      await ensureConnected(modelName);
 
-      // In-memory fallback
-      const store = getStore(modelName);
-      let matches = [];
-      for (const item of store.values()) {
-        if (matchesWhere(item, where)) {
-          matches.push(formatDoc(item));
-        }
-      }
+      let query = MongooseModel.findOne(toMongoQuery(where));
+      const sort = toMongoSort(orderBy);
+      if (sort) query = query.sort(sort);
 
-      if (orderBy) {
-        const [field, dir] = Object.entries(orderBy)[0] || [];
-        if (field) {
-          matches.sort((a, b) => {
-            const va = a[field] ?? 0;
-            const vb = b[field] ?? 0;
-            return dir === "desc" ? (va < vb ? 1 : -1) : (va > vb ? 1 : -1);
-          });
-        }
-      }
+      const doc = await query.lean().exec();
+      if (!doc) return null;
 
-      const match = matches[0] || null;
-      if (match && include) {
-        const [withInc] = await applyIncludes(modelName, [match], include, prisma);
-        return withInc;
+      const formatted = formatDoc(doc);
+      if (include) {
+        const [withIncludes] = await applyIncludes(modelName, [formatted], include, prisma);
+        return withIncludes;
       }
-      return match;
+      return formatted;
     },
 
     async findMany({ where, select, include, orderBy, take } = {}) {
-      if (mongoose.connection.readyState === 1) {
-        try {
-          const query = {};
-          if (where) {
-            for (const [k, v] of Object.entries(where)) {
-              if (k === "id") query._id = v;
-              else if (v && typeof v === "object" && v.gte !== undefined) query[k] = { $gte: v.gte };
-              else query[k] = v;
-            }
-          }
-          let q = MongooseModel.find(query);
-          if (orderBy) {
-            const sort = {};
-            for (const [k, v] of Object.entries(orderBy)) {
-              sort[k] = v === "desc" ? -1 : 1;
-            }
-            q = q.sort(sort);
-          }
-          if (take) q = q.limit(take);
-          const docs = await q.lean().exec();
-          const formatted = docs.map(formatDoc);
-          if (include) {
-            return applyIncludes(modelName, formatted, include, prisma);
-          }
-          return formatted;
-        } catch (e) {
-          // fallback
-        }
-      }
+      await ensureConnected(modelName);
 
-      const store = getStore(modelName);
-      let results = [];
-      for (const item of store.values()) {
-        if (matchesWhere(item, where)) {
-          results.push(formatDoc(item));
-        }
-      }
+      let query = MongooseModel.find(toMongoQuery(where));
+      const sort = toMongoSort(orderBy);
+      if (sort) query = query.sort(sort);
+      if (take) query = query.limit(take);
 
-      if (orderBy) {
-        const [field, dir] = Object.entries(orderBy)[0] || [];
-        if (field) {
-          results.sort((a, b) => {
-            const va = a[field] ?? 0;
-            const vb = b[field] ?? 0;
-            return dir === "desc" ? (va < vb ? 1 : -1) : (va > vb ? 1 : -1);
-          });
-        }
-      }
-
-      if (take && take > 0) {
-        results = results.slice(0, take);
-      }
+      const docs = await query.lean().exec();
+      const formatted = docs.map(formatDoc);
 
       if (include) {
-        return applyIncludes(modelName, results, include, prisma);
+        return applyIncludes(modelName, formatted, include, prisma);
       }
-      return results;
+      return formatted;
     },
 
     async create({ data, select } = {}) {
-      const now = new Date();
-      const id = data.id || data._id || new mongoose.Types.ObjectId().toString();
-      const payload = {
-        ...data,
-        _id: id,
-        id,
-        createdAt: data.createdAt || now,
-        updatedAt: data.updatedAt || now,
-      };
+      await ensureConnected(modelName);
 
-      if (mongoose.connection.readyState === 1) {
-        try {
-          const doc = new MongooseModel(payload);
-          await doc.save();
-          const formatted = formatDoc(doc.toObject ? doc.toObject() : doc);
-          getStore(modelName).set(id, formatted);
-          return formatted;
-        } catch (e) {
-          // fallback
-        }
-      }
-
-      const formatted = formatDoc(payload);
-      getStore(modelName).set(id, formatted);
-      return formatted;
+      const doc = new MongooseModel(data);
+      await doc.save();
+      return formatDoc(doc.toObject ? doc.toObject() : doc);
     },
 
     async update({ where, data, select } = {}) {
-      const existing = await this.findFirst({ where });
-      if (!existing) {
+      await ensureConnected(modelName);
+
+      const $set = {};
+      const $inc = {};
+      for (const [key, value] of Object.entries(data)) {
+        if (value && typeof value === "object" && value.increment !== undefined) {
+          $inc[key] = value.increment;
+        } else {
+          $set[key] = value;
+        }
+      }
+      $set.updatedAt = new Date();
+
+      const updateDoc = Object.keys($inc).length > 0 ? { $set, $inc } : { $set };
+
+      const doc = await MongooseModel.findOneAndUpdate(toMongoQuery(where), updateDoc, {
+        returnDocument: "after",
+        lean: true,
+      }).exec();
+
+      if (!doc) {
         throw new Error(`Record to update not found in ${modelName}`);
       }
-
-      const updatedFields = {};
-      for (const [k, v] of Object.entries(data)) {
-        if (v && typeof v === "object" && v.increment !== undefined) {
-          updatedFields[k] = (existing[k] || 0) + v.increment;
-        } else {
-          updatedFields[k] = v;
-        }
-      }
-      updatedFields.updatedAt = new Date();
-
-      if (mongoose.connection.readyState === 1) {
-        try {
-          const targetId = existing.id || existing._id;
-          const doc = await MongooseModel.findByIdAndUpdate(
-            targetId,
-            { $set: updatedFields },
-            { returnDocument: "after", lean: true }
-          ).exec();
-          if (doc) {
-            const formatted = formatDoc(doc);
-            getStore(modelName).set(targetId, formatted);
-            return formatted;
-          }
-        } catch (e) {
-          // fallback
-        }
-      }
-
-      const merged = { ...existing, ...updatedFields };
-      const formatted = formatDoc(merged);
-      getStore(modelName).set(formatted.id, formatted);
-      return formatted;
+      return formatDoc(doc);
     },
 
     async upsert({ where, create, update } = {}) {
@@ -443,47 +410,27 @@ function createModelAdapter(modelName, MongooseModel) {
     },
 
     async delete({ where } = {}) {
+      await ensureConnected(modelName);
+
       const existing = await this.findFirst({ where });
       if (!existing) {
         throw new Error(`Record to delete not found in ${modelName}`);
       }
-      const targetId = existing.id || existing._id;
 
-      if (mongoose.connection.readyState === 1) {
-        try {
-          await MongooseModel.findByIdAndDelete(targetId).exec();
-        } catch (e) {}
-      }
-
-      getStore(modelName).delete(targetId);
+      await MongooseModel.findByIdAndDelete(existing.id).exec();
       return existing;
     },
 
     async deleteMany({ where } = {}) {
-      const items = await this.findMany({ where });
-      for (const it of items) {
-        await this.delete({ where: { id: it.id } });
-      }
-      return { count: items.length };
+      await ensureConnected(modelName);
+
+      const result = await MongooseModel.deleteMany(toMongoQuery(where)).exec();
+      return { count: result.deletedCount || 0 };
     },
 
     async count({ where } = {}) {
-      if (mongoose.connection.readyState === 1) {
-        try {
-          const query = {};
-          if (where) {
-            for (const [k, v] of Object.entries(where)) {
-              if (k === "id") query._id = v;
-              else if (v && typeof v === "object" && v.gte !== undefined) query[k] = { $gte: v.gte };
-              else query[k] = v;
-            }
-          }
-          return await MongooseModel.countDocuments(query).exec();
-        } catch (e) {}
-      }
-
-      const items = await this.findMany({ where });
-      return items.length;
+      await ensureConnected(modelName);
+      return MongooseModel.countDocuments(toMongoQuery(where)).exec();
     },
   };
 }

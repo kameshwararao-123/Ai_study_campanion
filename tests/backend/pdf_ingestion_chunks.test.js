@@ -26,7 +26,7 @@ test("Comprehensive PDF Ingestion & Chunking Test Suite (12 Scenarios)", async (
       email: `chunking_tester_${timestamp}@example.com`,
       name: "Chunking Tester",
       passwordHash: "mock_hash_eval",
-      role: "STUDENT",
+      role: "LEARNER",
     },
   });
 
@@ -55,6 +55,7 @@ test("Comprehensive PDF Ingestion & Chunking Test Suite (12 Scenarios)", async (
       spaceId: space.id,
       name: "SQL & RDBMS Project",
       description: "Relational queries, DDL, DML and constraints",
+      learningGoal: "Master SQL and relational database design",
       userId: testUser.id,
     },
   });
@@ -64,6 +65,7 @@ test("Comprehensive PDF Ingestion & Chunking Test Suite (12 Scenarios)", async (
       spaceId: space.id,
       name: "Distributed Computing Project",
       description: "Distributed consensus and cloud architecture",
+      learningGoal: "Understand distributed consensus and cloud architecture",
       userId: testUser.id,
     },
   });
@@ -176,9 +178,9 @@ The ER diagram displays Entity User connecting with 1-to-many relationship to Or
       data: {
         projectId: projectA.id,
         userId: testUser.id,
-        title: "Mixed Architecture Guide",
-        fileType: "PDF",
+        filename: "Mixed Architecture Guide.pdf",
         fileUrl: "https://example.com/mixed.pdf",
+        fileSizeBytes: 204800,
         status: "READY",
       },
     });
@@ -309,9 +311,9 @@ The ER diagram displays Entity User connecting with 1-to-many relationship to Or
       data: {
         projectId: projectA.id,
         userId: testUser.id,
-        title: "Empty Document",
-        fileType: "PDF",
+        filename: "Empty Document.pdf",
         fileUrl: "https://example.com/empty.pdf",
+        fileSizeBytes: 1024,
         status: "PROCESSING",
       },
     });
@@ -327,14 +329,14 @@ The ER diagram displays Entity User connecting with 1-to-many relationship to Or
         where: { id: emptyMaterial.id },
         data: {
           status: "FAILED",
-          processingError: err.message,
+          errorMessage: err.message,
         },
       });
     }
 
     const updated = await prisma.learningMaterial.findUnique({ where: { id: emptyMaterial.id } });
     assert.strictEqual(updated.status, "FAILED");
-    assert.ok(updated.processingError.includes("Zero chunks created"));
+    assert.ok(updated.errorMessage.includes("Zero chunks created"));
     assert.notStrictEqual(updated.status, "READY", "Material with 0 chunks must NEVER become READY");
   });
 

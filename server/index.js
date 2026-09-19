@@ -1,6 +1,9 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import path from "path";
+import { fileURLToPath } from "url";
+import fs from "fs";
 import { authRouter } from "./routes/auth.js";
 import { spacesRouter } from "./routes/spaces.js";
 import { projectsRouter } from "./routes/projects.js";
@@ -14,12 +17,41 @@ import { adminRouter } from "./routes/admin.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { connectDB } from "./lib/db.js";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const CLIENT_DIST_PATH = path.resolve(__dirname, "../client/dist");
+
 const app = express();
 const PORT = process.env.PORT || 5000;
-const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
+
+// Flexible CORS setup: supports single origin, comma-separated origins, or wildcard
+const rawClientUrls = (process.env.CLIENT_URL || "http://localhost:5173")
+  .split(",")
+  .map((u) => {
+    const trimmed = u.trim();
+    if (!trimmed || trimmed === "*") return trimmed;
+    try {
+      return new URL(trimmed).origin;
+    } catch {
+      return trimmed.replace(/\/+$/, "");
+    }
+  })
+  .filter(Boolean);
+const allowedOrigins = new Set([...rawClientUrls, "http://localhost:5173", "http://localhost:5000", "http://localhost:3000"]);
 
 app.use(cors({
-  origin: CLIENT_URL,
+  origin: (origin, callback) => {
+    // Allow non-browser requests (mobile, curl, server-to-server) or same-origin
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.has("*") || allowedOrigins.has(origin)) {
+      return callback(null, true);
+    }
+    // Allow any localhost port in development
+    if (process.env.NODE_ENV !== "production" && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error(`Blocked by CORS for origin: ${origin}`));
+  },
   credentials: true,
 }));
 app.use(express.json({ limit: "10mb" }));
@@ -41,17 +73,37 @@ app.get("/api/health", (req, res) => {
   res.json({ success: true, data: { status: "ok", timestamp: new Date().toISOString() } });
 });
 
+// In production, serve static assets and support SPA client-side routing
+if (fs.existsSync(CLIENT_DIST_PATH)) {
+  app.use(express.static(CLIENT_DIST_PATH));
+  app.get("*", (req, res, next) => {
+    // Keep 404 for unhandled API calls
+    if (req.path.startsWith("/api/")) {
+      return res.status(404).json({ success: false, error: { code: "NOT_FOUND", message: "API endpoint not found" } });
+    }
+    res.sendFile(path.join(CLIENT_DIST_PATH, "index.html"));
+  });
+} else {
+  app.get("/", (req, res) => {
+    res.send("Backend is running");
+  });
+}
+
 app.use(errorHandler);
-app.get("/", (req, res) => {
-  res.send("Backend is running");
-});
 const isTestEnv = process.env.NODE_ENV === "test" || process.argv.some((arg) => arg.includes("test"));
 if (!isTestEnv) {
-  connectDB().then(() => {
-    app.listen(PORT, () => {
-      console.log(`🚀 AI Study Companion server running on http://localhost:${PORT}`);
+  connectDB()
+    .then(() => {
+      app.listen(PORT, () => {
+        console.log(`🚀 AI Study Companion server running on http://localhost:${PORT}`);
+      });
+    })
+    .catch((err) => {
+      // MongoDB Atlas is the only persistence layer: without it there is no
+      // trustworthy place to read or write data, so refuse to start.
+      console.error(`❌ Could not start server: MongoDB Atlas is unavailable (${err.message})`);
+      process.exit(1);
     });
-  });
 }
 
 export default app;

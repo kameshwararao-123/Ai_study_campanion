@@ -203,74 +203,198 @@ class MockAIProvider {
     let data;
 
     if (lower.includes("quiz") || lower.includes("question") || lower.includes("assessment")) {
-      data = {
-        title: "Adaptive Mastery Assessment",
-        questions: [
-          {
+      // Parse project name and topics from the prompt
+      const projMatch = prompt.match(/project\s*["']([^"']+)["']/i) || prompt.match(/project\s+([a-zA-Z0-9_\s\-]+)/i);
+      const projectName = projMatch ? projMatch[1].trim() : "Project";
+
+      const topics = [];
+      const topicRegex = /-\s*["']?([^"':\n]+)["']?:\s*([^\n]+)/g;
+      let match;
+      while ((match = topicRegex.exec(prompt)) !== null) {
+        const name = match[1].trim();
+        const definition = match[2].trim();
+        if (name && !name.toLowerCase().startsWith("topics that") && !name.toLowerCase().startsWith("produce at least")) {
+          topics.push({ name, definition });
+        }
+      }
+
+      const optionLetters = ["A", "B", "C", "D"];
+      const questions = [];
+
+      if (topics.length > 0) {
+        topics.forEach((topic, idx) => {
+          const correctIdx = idx % 4;
+          const correctLetter = optionLetters[correctIdx];
+          const distractor1 = `An unrelated concept that does not apply to ${topic.name}`;
+          const distractor2 = `A deprecated practice that contradicts the principles of ${topic.name}`;
+          const distractor3 = `A hardware-only specification outside the scope of ${projectName}`;
+
+          const optLabels = [];
+          let dIndex = 0;
+          const distractors = [distractor1, distractor2, distractor3];
+          for (let i = 0; i < 4; i++) {
+            if (i === correctIdx) {
+              optLabels.push({ value: optionLetters[i], label: topic.definition });
+            } else {
+              optLabels.push({ value: optionLetters[i], label: distractors[dIndex++] });
+            }
+          }
+
+          questions.push({
             conceptId: null,
+            concept: topic.name,
             questionType: "MCQ",
-            prompt: "What distinguishes supervised learning from other machine learning paradigms?",
-            options: [
-              { value: "A", label: "Learning strictly through environment rewards without prior labels" },
-              { value: "B", label: "Training models using paired labeled inputs and target outputs" },
-              { value: "C", label: "Clustering unlabeled feature vectors based on geometric distance" },
-              { value: "D", label: "Unsupervised masked auto-encoding of raw byte streams" },
-            ],
-            correctAnswer: "B",
-            explanation: "Supervised learning uses labeled pairs (x, y) to minimize empirical risk and loss.",
+            prompt: `Which statement accurately defines or characterizes "${topic.name}" in ${projectName}?`,
+            options: optLabels,
+            correctAnswer: correctLetter,
+            explanation: `According to the course materials, ${topic.name} is defined as: ${topic.definition}`,
             difficultyScore: 0.5,
-          },
-          {
-            conceptId: null,
-            questionType: "MCQ",
-            prompt: "Which optimization algorithm maintains per-parameter adaptive learning rates based on first and second gradient moments?",
-            options: [
-              { value: "A", label: "Adam (Adaptive Moment Estimation)" },
-              { value: "B", label: "Batch Gradient Descent with fixed step size" },
-              { value: "C", label: "Standard SGD without momentum" },
-              { value: "D", label: "Linear Perceptron Delta Rule" },
-            ],
-            correctAnswer: "A",
-            explanation: "Adam computes individual adaptive learning rates for different parameters from estimates of first and second moments of the gradients.",
-            difficultyScore: 0.6,
-          },
-          {
-            conceptId: null,
-            questionType: "OPEN_ENDED",
-            prompt: "Explain how a loss function guides model weight updates during training.",
-            correctAnswer: "The loss function quantifies prediction error; its gradient determines the direction and magnitude of weight adjustments.",
-            explanation: "The loss function measures error and provides the gradient vector for backpropagation.",
-            difficultyScore: 0.7,
-          },
-        ],
+          });
+
+          // Also add an open-ended question for every other topic or if few topics
+          if (idx % 2 === 1 || topics.length <= 2) {
+            questions.push({
+              conceptId: null,
+              concept: topic.name,
+              questionType: "OPEN_ENDED",
+              prompt: `Explain the practical importance of "${topic.name}" within ${projectName}, and describe how it works.`,
+              correctAnswer: `Understanding ${topic.name} is essential for ${projectName}. Specifically: ${topic.definition}`,
+              explanation: `A comprehensive answer defines ${topic.name}, explains its core mechanics, and highlights its significance in ${projectName}.`,
+              difficultyScore: 0.7,
+            });
+          }
+        });
+      } else {
+        // Fallback grounded in project name
+        questions.push({
+          conceptId: null,
+          concept: projectName,
+          questionType: "MCQ",
+          prompt: `What is the primary objective of studying "${projectName}"?`,
+          options: [
+            { value: "A", label: `To master core principles, structures, and practical workflows of ${projectName}` },
+            { value: "B", label: `To replace modern system workflows with legacy batch processing` },
+            { value: "C", label: `To configure unrelated hardware-level memory buses` },
+            { value: "D", label: `An unverified experimental hypothesis without practical applications` },
+          ],
+          correctAnswer: "A",
+          explanation: `Mastering ${projectName} provides the fundamental understanding required to implement and analyze its core concepts.`,
+          difficultyScore: 0.5,
+        });
+        questions.push({
+          conceptId: null,
+          concept: projectName,
+          questionType: "OPEN_ENDED",
+          prompt: `Explain the fundamental concepts and practical significance of ${projectName}.`,
+          correctAnswer: `Mastering ${projectName} requires understanding its key principles, structural models, and operational workflows.`,
+          explanation: `A complete explanation highlights the definition, architecture, and real-world relevance of ${projectName}.`,
+          difficultyScore: 0.7,
+        });
+      }
+
+      data = {
+        title: `Adaptive Assessment: ${projectName}`,
+        questions,
       };
     } else if (lower.includes("concept") || lower.includes("extract")) {
-      data = [
-        {
-          name: "Supervised Learning",
-          definition: "A machine learning paradigm where models are trained on labeled data.",
+      // Dynamic concept extraction from the provided text
+      const extractedConcepts = [];
+      const textToScan = prompt.replace(/Extract key concepts and definitions from this learning material:\s*/i, "").trim();
+
+      // Look for headings, table names, bullet points, or key terms
+      const lines = textToScan.split("\n").map((l) => l.trim()).filter(Boolean);
+      for (const line of lines) {
+        if (extractedConcepts.length >= 6) break;
+        const clean = line.replace(/^[#*\->\d\.\s]+/, "").trim();
+        if (clean.length > 5 && clean.length < 80) {
+          const colonSplit = clean.split(/:\s+/);
+          if (colonSplit.length === 2 && colonSplit[0].length < 40) {
+            extractedConcepts.push({
+              name: colonSplit[0].replace(/[*_#]/g, "").trim(),
+              definition: colonSplit[1].replace(/[*_#]/g, "").trim(),
+              importanceScore: 0.85,
+              sourcePage: 1,
+            });
+          }
+        }
+      }
+
+      if (extractedConcepts.length < 2) {
+        // Look for capitalized phrases or prominent technical terms in the text
+        const termMatches = textToScan.match(/\b([A-Z][a-zA-Z0-9_\.\-]{2,25}(?:\s+[A-Z][a-zA-Z0-9_\.\-]{2,25})*)\b/g);
+        const uniqueTerms = [...new Set(termMatches || [])].filter(
+          (t) => !["The", "This", "That", "These", "Those", "Extract", "Learning", "Material", "Project", "Which", "What", "When", "Where", "How", "Chapter", "Section", "Page"].includes(t)
+        );
+
+        for (const term of uniqueTerms.slice(0, 5)) {
+          extractedConcepts.push({
+            name: term,
+            definition: `Core topic and architectural concept identified in the learning materials: ${term}.`,
+            importanceScore: 0.85,
+            sourcePage: 1,
+          });
+        }
+      }
+
+      if (extractedConcepts.length === 0) {
+        extractedConcepts.push({
+          name: "Core Principles",
+          definition: "Fundamental principles and techniques covered in the study materials.",
           importanceScore: 0.9,
-          sourcePage: 14,
-        },
-        {
-          name: "Loss Function",
-          definition: "A mathematical function measuring prediction error to guide optimization.",
-          importanceScore: 0.85,
-          sourcePage: 15,
-        },
-      ];
+          sourcePage: 1,
+        });
+      }
+
+      data = extractedConcepts;
     } else if (lower.includes("evaluat") || lower.includes("feedback")) {
+      // Dynamic evaluation grounded in student answer and reference answer
+      const qMatch = prompt.match(/Question:\s*([^\n]+)/i);
+      const refMatch = prompt.match(/Reference answer:\s*([^\n]+)/i);
+      const studentMatch = prompt.match(/Student answer:\s*([\s\S]+)$/i);
+      const topicMatch = prompt.match(/Topic:\s*([^\n]+)/i);
+
+      const topicName = topicMatch ? topicMatch[1].trim() : "this topic";
+      const refText = refMatch ? refMatch[1].trim() : "";
+      const studentText = studentMatch ? studentMatch[1].trim() : "";
+
+      const refWords = new Set(
+        refText.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 3)
+      );
+      const studentWords = new Set(
+        studentText.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 3)
+      );
+
+      const covered = [...refWords].filter((w) => studentWords.has(w));
+      const missing = [...refWords].filter((w) => !studentWords.has(w));
+      const ratio = refWords.size > 0 ? covered.length / refWords.size : (studentText.length > 30 ? 0.6 : 0.3);
+
+      let understandingScore = 0;
+      let feedback = "";
+
+      if (ratio >= 0.5 || studentText.length > 100) {
+        understandingScore = Math.min(95, Math.round(75 + ratio * 25));
+        feedback = `Great explanation! You accurately covered key aspects of ${topicName}${covered.length ? ` (including ${covered.slice(0, 3).join(", ")})` : ""}.`;
+      } else if (ratio >= 0.25 || studentText.length > 40) {
+        understandingScore = Math.round(55 + ratio * 30);
+        feedback = `Good start covering ${topicName}. You touched on ${covered.slice(0, 2).join(", ") || "the basics"}, but consider expanding on ${missing.slice(0, 3).join(", ") || "core implementation details"}.`;
+      } else {
+        understandingScore = Math.max(25, Math.round(30 + ratio * 20));
+        feedback = `Your answer touches on ${topicName}, but lacks key conceptual depth. Be sure to explain ${missing.slice(0, 3).join(", ") || "the full mechanism and purpose"}.`;
+      }
+
       data = {
-        understandingScore: 85,
-        accuracy: true,
-        keyConceptsCovered: ["gradient direction", "error quantification"],
-        missingConcepts: ["learning rate influence"],
-        feedback: "Solid understanding of how the loss gradient directs parameter adjustments. Consider also explaining how learning rate regulates the step size along the gradient vector.",
+        understandingScore,
+        accuracy: understandingScore >= 70,
+        keyConceptsCovered: covered.slice(0, 5),
+        missingConcepts: missing.slice(0, 5),
+        feedback,
       };
     } else if (lower.includes("recommend")) {
+      const topicMatch = prompt.match(/concept:\s*([^\n]+)/i) || prompt.match(/topic:\s*([^\n]+)/i);
+      const topic = topicMatch ? topicMatch[1].trim() : "Core Study Concepts";
       data = {
-        title: "Review Loss Functions & Practice Assessment",
-        message: "Your mastery of Supervised Learning is solid (88%). Spend 15 minutes reviewing Page 15 on Loss Functions and complete a short quiz to reinforce understanding.",
+        title: `Review ${topic} & Practice Assessment`,
+        message: `Your understanding of ${topic} can be strengthened with targeted review and practice.`,
         actionType: "TAKE_QUIZ",
       };
     } else {
@@ -396,7 +520,14 @@ class GeminiAIProvider {
       base64 = imageBufferOrDataUri.toString("base64");
     }
 
-    const candidateModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
+    const candidateModels = [
+      options.model || process.env.GEMINI_MODEL || "gemini-3.5-flash",
+      "gemini-3.5-flash",
+      "gemini-3.8-flash",
+      "gemini-3.1-flash-lite",
+      "gemini-flash-latest",
+      "gemini-3.6-flash",
+    ];
     for (const modelName of candidateModels) {
       try {
         const model = this.genAI.getGenerativeModel({ model: modelName });
@@ -425,11 +556,12 @@ class GeminiAIProvider {
 
     const start = Date.now();
     const candidateModels = [...new Set([
-      options.model || process.env.GEMINI_MODEL || "gemini-2.5-flash",
-      "gemini-2.5-flash",
-      "gemini-2.0-flash",
-      "gemini-1.5-flash",
-      "gemini-1.5-pro",
+      options.model || process.env.GEMINI_MODEL || "gemini-3.5-flash",
+      "gemini-3.5-flash",
+      "gemini-3.8-flash",
+      "gemini-3.1-flash-lite",
+      "gemini-flash-latest",
+      "gemini-3.6-flash",
     ])];
 
     for (const modelName of candidateModels) {
@@ -467,11 +599,12 @@ class GeminiAIProvider {
   async generateText(prompt, options = {}) {
     const start = Date.now();
     const candidateModels = [...new Set([
-      options.model || process.env.GEMINI_MODEL || "gemini-2.5-flash",
-      "gemini-2.5-flash",
-      "gemini-2.0-flash",
-      "gemini-1.5-flash",
-      "gemini-1.5-pro",
+      options.model || process.env.GEMINI_MODEL || "gemini-3.5-flash",
+      "gemini-3.5-flash",
+      "gemini-3.8-flash",
+      "gemini-3.1-flash-lite",
+      "gemini-flash-latest",
+      "gemini-3.6-flash",
     ])];
 
     let lastError = null;
@@ -516,7 +649,7 @@ class GeminiAIProvider {
   }
 
   async* generateStream(prompt, options = {}) {
-    const modelName = options.model || process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const modelName = options.model || process.env.GEMINI_MODEL || "gemini-3.5-flash";
     const model = this.genAI.getGenerativeModel({
       model: modelName,
       systemInstruction: options.systemInstruction,
@@ -529,11 +662,12 @@ class GeminiAIProvider {
 
   async generateStructured(prompt, schema = null, options = {}) {
     const candidateModels = [...new Set([
-      options.model || process.env.GEMINI_MODEL || "gemini-2.5-flash",
-      "gemini-2.5-flash",
-      "gemini-2.0-flash",
-      "gemini-1.5-flash",
-      "gemini-1.5-pro",
+      options.model || process.env.GEMINI_MODEL || "gemini-3.5-flash",
+      "gemini-3.5-flash",
+      "gemini-3.8-flash",
+      "gemini-3.1-flash-lite",
+      "gemini-flash-latest",
+      "gemini-3.6-flash",
     ])];
 
     const systemInstruction = (options.systemInstruction || "") +

@@ -184,8 +184,9 @@ class BackgroundQueue {
         throw new Error(`Embedding count mismatch: generated ${embeddings.length} embeddings for ${chunks.length} chunks.`);
       }
 
-      // 5. Save chunks preserving all metadata and structured data
-      let storedChunksCount = 0;
+      // 5. Save chunks preserving all metadata and structured data.
+      // metadata is stored as a JSON string (its documented schema type) and content
+      // is never left empty, which `required: true` would reject.
       for (let i = 0; i < chunks.length; i++) {
         const c = chunks[i];
         await prisma.documentChunk.create({
@@ -197,18 +198,27 @@ class BackgroundQueue {
             startPage: c.startPage,
             endPage: c.endPage,
             contentType: c.contentType || "TEXT",
-            content: c.content,
+            content: c.content || " ",
             tokenCount: c.tokenCount,
             embedding: JSON.stringify(embeddings[i] || []),
-            metadata: c.metadata,
+            metadata: typeof c.metadata === "string" ? c.metadata : JSON.stringify(c.metadata || {}),
             structuredData: c.structuredData,
             sourceMetadata: c.sourceMetadata,
           },
         });
-        storedChunksCount++;
       }
 
-      console.log(`[Pipeline] Total chunks stored: ${storedChunksCount}`);
+      // Verify what is ACTUALLY in the database instead of trusting the write loop.
+      // A silently unpersisted chunk set is indistinguishable from an empty document
+      // to retrieval, so it must never be reported as a successful index.
+      const storedChunksCount = await prisma.documentChunk.count({ where: { materialId } });
+      if (storedChunksCount === 0) {
+        throw new Error(
+          `Chunk persistence failed: 0 of ${chunks.length} chunks were stored for this material.`
+        );
+      }
+
+      console.log(`[Pipeline] Total chunks stored: ${storedChunksCount}/${chunks.length}`);
       console.log(`[Pipeline] Total chunks: ${chunks.length}`);
       console.log(`[Pipeline] Embeddings generated: ${embeddings.length}`);
       console.log(`[Pipeline] Embeddings stored: ${storedChunksCount}`);
@@ -325,40 +335,59 @@ class BackgroundQueue {
       },
     });
 
-    // Update concept mastery based on quiz performance (REQ-049, REQ-051)
+    // Update concept mastery based on quiz performance (REQ-049, REQ-051).
+    // Questions are grouped per topic so a topic assessed by several questions is
+    // judged once on its average score, rather than compounding one delta per
+    // question (which inflated or tanked mastery depending on question count).
+    const submissionsByConcept = new Map();
     for (const sub of submissions) {
-      if (sub.question?.conceptId) {
-        const delta = sub.isCorrect ? 15.0 : -10.0;
-        const existing = await prisma.conceptMastery.findFirst({
-          where: { conceptId: sub.question.conceptId, userId, projectId },
-        });
+      const conceptId = sub.question?.conceptId;
+      if (!conceptId) continue;
+      if (!submissionsByConcept.has(conceptId)) submissionsByConcept.set(conceptId, []);
+      submissionsByConcept.get(conceptId).push(sub);
+    }
 
-        if (existing) {
-          const newScore = Math.max(0, Math.min(100, existing.masteryScore + delta));
-          const trend = newScore >= 75 ? "IMPROVING" : newScore >= 50 ? "STABLE" : "REQUIRING_ATTENTION";
+    for (const [conceptId, conceptSubmissions] of submissionsByConcept) {
+      const answeredCount = conceptSubmissions.filter(
+        (s) => s.userAnswer && s.userAnswer !== "Unanswered"
+      ).length;
+      const averageScore = Math.round(
+        conceptSubmissions.reduce((acc, s) => acc + (s.scoreEarned || 0), 0) /
+          conceptSubmissions.length
+      );
 
-          await prisma.conceptMastery.update({
-            where: { id: existing.id },
-            data: {
-              masteryScore: newScore,
-              trend,
-              lastAssessedAt: new Date(),
-            },
-          });
+      const existing = await prisma.conceptMastery.findFirst({
+        where: { conceptId, userId, projectId },
+      });
+      if (!existing) continue;
 
-          await prisma.masteryHistoryLog.create({
-            data: {
-              masteryId: existing.id,
-              conceptId: sub.question.conceptId,
-              projectId,
-              userId,
-              previousScore: existing.masteryScore,
-              newScore,
-              sourceType: "QUIZ",
-            },
-          });
-        }
-      }
+      // Partial credit counts: a nearly-mastered topic is not penalised as harshly
+      // as one that is clearly unresolved.
+      const delta = averageScore >= 70 ? 15.0 : averageScore >= 40 ? -5.0 : -10.0;
+      const newScore = Math.max(0, Math.min(100, existing.masteryScore + delta));
+      const trend = newScore >= 75 ? "IMPROVING" : newScore >= 50 ? "STABLE" : "REQUIRING_ATTENTION";
+
+      await prisma.conceptMastery.update({
+        where: { id: existing.id },
+        data: {
+          masteryScore: newScore,
+          confidenceScore: Number((answeredCount / conceptSubmissions.length).toFixed(2)),
+          trend,
+          lastAssessedAt: new Date(),
+        },
+      });
+
+      await prisma.masteryHistoryLog.create({
+        data: {
+          masteryId: existing.id,
+          conceptId,
+          projectId,
+          userId,
+          previousScore: existing.masteryScore,
+          newScore,
+          sourceType: "QUIZ",
+        },
+      });
     }
 
     // Generate targeted recommendation (REQ-055, REQ-056)

@@ -1,0 +1,16 @@
+node_modules
+client/node_modules
+client/dist
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.log
+uploads/*
+!uploads/.gitkeep
+tmp
+temp
+.vscode
+.idea
+

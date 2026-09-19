@@ -158,20 +158,33 @@ export default function GlobalAnalyticsPage() {
               </div>
             ) : (
               <div className="space-y-3">
-                {weakAreas.map((w) => (
-                  <div
-                    key={w.id}
-                    className="p-4 bg-amber-50/30 rounded-2xl border border-amber-100/70 flex items-center justify-between"
-                  >
-                    <div>
-                      <span className="text-xs font-bold text-slate-900">{w.name}</span>
-                      <p className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">{w.definition || "Concept needing review"}</p>
+                {weakAreas.map((w, idx) => {
+                  const name = w.name || w.conceptName || "Core Concept";
+                  const score = w.masteryScore ?? w.score ?? 0;
+                  return (
+                    <div
+                      key={w.id || w.conceptId || idx}
+                      className="p-4 bg-amber-50/30 rounded-2xl border border-amber-100/70 flex items-center justify-between"
+                    >
+                      <div className="min-w-0 pr-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-slate-900 truncate">{name}</span>
+                          {w.projectName && (
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 truncate shrink-0">
+                              {w.projectName}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">
+                          {w.definition || "Concept needing review and practice"}
+                        </p>
+                      </div>
+                      <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 shrink-0 ml-3">
+                        {Math.round(score)}%
+                      </span>
                     </div>
-                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 shrink-0 ml-3">
-                      {w.masteryScore ? `${w.masteryScore.toFixed(0)}%` : "0%"}
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
